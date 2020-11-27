@@ -1,0 +1,235 @@
+---
+title: "Salaries"
+author: "Gina Nichols"
+date: "11/27/2020"
+output: html_document
+---
+
+# ISU Professor Salaries - gender disparities?
+
+Load general packages
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(janitor)
+library(dplyr)
+library(tidyr)
+library(tidytext)
+library(tibble)
+library(ggplot2)
+library(scales)
+library(stringr)
+library(forcats)
+library(emo)
+
+theme_set(theme_bw())
+
+```
+
+First I need to get the data.
+
+```{r}
+if("CyChecks3" %in% rownames(installed.packages()) == FALSE) {remotes::install_github("vanichols/CyChecks3")}
+library(CyChecks3)
+
+data("professors")
+profs <- professors %>% as_tibble()
+head(profs)
+```
+
+## Look at the data
+
+Maybe this is cheating, but I think it's important to QC it. 
+
+```{r}
+profs %>%
+  mutate(title_simp = as_factor(title_simp),
+         title_simp = fct_reorder(title_simp, base_salary)) %>% 
+  ggplot(aes(gender, base_salary, color = gender)) +
+  geom_boxplot(outlier.colour = NA) +
+  geom_hline(yintercept = 50000, linetype = "dashed") +
+  geom_jitter(alpha = 0.4) +
+  facet_grid(.~title_simp) +
+  scale_y_continuous(labels = dollar_format()) +
+  guides(color = F) +
+  labs(title = "2019 ISU Salaries",
+       y = "Reported Base Salary",
+       x = NULL) +
+  theme_bw()
+```
+
+Three things of note here:
+
+1. There are people who make $0 in base_salary. 
+
+2. There are no Asst Profs who make less than \$50,000, so anyone with a higher rank making less than $50 000 probably has a unique arrangement. It's an arbitrary cut-off, but it's fine for a start. There are also a fair number of professors who apparently make \$0. Additionally, we want to eliminate department heads from the analysis, as they are certainly in unique positions. 
+
+
+3. Dang. Who makes more than $150thou as an Asst Prof?
+```{r}
+profs %>%
+  filter(base_salary > 150000,
+         title_simp == "asst prof") %>%
+  select(college, dept, title) %>% 
+  distinct()
+
+```
+Oh. Business people. `r emo::ji("face")`
+
+
+Create data for the models (mdat) that doesn't include department heads, or people making less than $50thou
+```{r}
+
+mdat <- 
+  profs %>%
+  filter(dept_chair == "N") %>%
+  filter(base50 == "Y")  %>%
+  mutate(lsal = log(base_salary)) %>% #--because I'm not sure how brms works
+  select(dept, gender, rank, lsal) %>% 
+  mutate_if(is.character, as.factor)
+
+  
+```
+
+## Fitting models
+
+
+```{r, message=FALSE}
+library(lme4)
+library(emmeans)
+library(broom)
+
+library(brms)
+library(tidybayes)
+
+options(mc.cores = parallel::detectCores())
+
+```
+
+My queston is whether males and females have different salaries. We only have one year of clean data right now, so the main variables to consider include:
+
+1. Gender
+2. Professor rank
+3. Department
+
+*Gender*
+
+I am not interested in the population of males and females, I'm interested in the males and females at Iowa State University. So this is a fixed effect.
+
+*Professor rank*
+
+Some professors were hired in...1980? Maybe even before. It may be that women were paid less if they were hired in the 1980s, and that lower salary has followed them. Assistant professors were likey hired within the last 5-6 years, so hopefully there aren't any salary differences in that hiring timeframe. It therefore makes sense to look at each 'professor rank' separately, as a fixed effect.
+
+*Department*
+
+This one is tricky, and depends on the question. While I may want to know if, overall, female professors are paid less than male professors (treat departments like a sample from a population, a random effect), if one wants to do an intervention it should likely happen on a department level (treat departments as a unit of interest, a fixed effect). 
+
+
+### Start with frequentist
+
+There are a kazillion departments, so for exmploring I make a smaller df with only 3 departments. I picked these three because I know, for example, Agronomy does not have any female asst, so I want to see what happens with missing data. 
+
+As per our conversation with Fernando, I order the explanatory variables in the order I think is strongest to weakest. Plus if I have an intercept of 0 and list department first, I'll get all the department intercepts. Right?
+
+```{r}
+
+mdat_sub <- 
+  mdat %>% 
+  filter(dept %in% c("agronomy", "statistics"))
+
+m1 <- lm(lsal ~ 0 + dept*rank*gender, data = mdat_sub)
+
+
+summary(m1) 
+
+```
+
+I need help interpreting this. 
+
+
+### Give up and do dept as random
+
+
+Since I am using a frequentist warm-up, I can quickly see if I want to have a random slope component. 
+
+```{r}
+
+fm1 <- lmerTest::lmer(lsal ~ rank * gender + (1|dept), data = mdat, REML = F)
+fm2 <- lmerTest::lmer(lsal ~ rank * gender + (1 + gender|dept), data = mdat, REML = F)
+
+anova(fm1, fm2) 
+
+
+```
+I don't gain much by including a random slope. So a random intercept it is. 
+
+Now I'll try the Bayesian way. 
+
+*Priors*
+
+I would guess a rough average salary is ~$120,000. So `r log(120000)` is a good mean value for the prior on the salaries. A standard deviation of 1 means most salaries are between `r round(exp(10.7), 0)` and `r round(exp(12.7), 0)`. 
+
+I generously assume the effect of position, gender, and their interaction can take a salary from the lowest value to the highest value. It's likely not that strong, I'm not sure if that matters. 
+
+$$
+\begin{array}{l}
+log\_sal_i \sim Normal(\mu_i, \sigma) \\
+\mu_i = \alpha + \gamma_i gender_i + \beta_1 pos_i\\
+\gamma_i = \beta_2 + \beta_3 pos_i \\
+\alpha \sim Normal(11.7, 1) \\
+\beta_1, \beta_2, \mathrm{and} \space \beta_3 \sim Normal(0, 1)\\
+\sigma \sim Exponential(0,1) \\
+\end{array}
+$$
+
+HOnestly, every time I mess with the priors things get worse. Do it with the defaults. 
+
+```{r}
+  bm1 <-
+  brm(
+    data = mdat,
+    family = gaussian,
+    formula = lsal ~ (1|dept) + rank*gender,
+    iter = 4000, chains = 4,
+    seed = 7) 
+
+```
+
+```{r}
+summary(bm1)
+```
+Again I'm having a hard time with these estimates. 
+*What does the intercept represent?*
+
+No matter, I suppose the interaction demonstrates the effect of being male at each rank.The effect of genderm is actually the effect at the assoc rank. 
+
+```{r}
+
+bm1 %>%
+  gather_draws(`b_.*`, regex = TRUE) %>%
+  ungroup() %>%
+  mutate(
+    .variable = ifelse(.variable == "b_genderm", "b_rankassoc:genderm", .variable),
+    .variable = str_remove_all(.variable, "b_|gender|rank")) %>%
+  dplyr::filter(grepl("m", .variable)) %>%
+  mutate(.variable = fct_reorder(.variable, .value)) %>%
+  ggplot(aes(x = .value, y = .variable)) +
+  geom_vline(xintercept = 0, color = "gray50", size = 1.2, lty = 2, alpha = 0.5) +
+  geom_halfeyeh(aes(fill = .variable)) +
+  theme(legend.position = "none") +
+  labs(title = "The effect of being male",
+       x = NULL,
+       y = NULL)
+```
+
+It seems like if I were to ask you if you wanted a male or female salary at the prof rank, you'd tend towards picking the male one. 
+
+Whether this is true at an indvidual department level seems like a question better asked using frequentist methods, because estimating `r mdat %>% select(dept) %>% distinct() %>% count() %>% pull(n)` departments for 4 ranks and 2 genders in 3-way interactions means over 200 parameters. 
+
+
+Returning to the frequentist model with a three-way interaction:
+```{r}
+summary(m1) 
+```
+How do I know what the effect of being male in agronomy is?
