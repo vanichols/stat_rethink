@@ -50,7 +50,7 @@ mdat_sub <-
   filter(dept %in% c("animal science", "statistics", "agronomy")) %>% 
   select(dept, gender, rank, lsal) %>% 
   mutate_if(is.character, as.factor) %>% 
-  mutate(rank = fct_reorder(rank, lsal))
+  mutate(rank = fct_reorder(rank, lsal)) 
   
 
 
@@ -65,8 +65,7 @@ library(tidybayes)
 
 options(mc.cores = parallel::detectCores())
 
-m1 <- lm(lsal ~ 0 + dept*rank*gender, data = mdat_sub)
-
+m1 <- lm(lsal ~ dept*rank*gender, data = mdat_sub)
 
 summary(m1) 
 
@@ -84,8 +83,18 @@ summary(m1)$coefficients %>%
   geom_linerange(aes(ymin = estimate - std_error, ymax = estimate + std_error)) + 
   facet_grid(.~x1)
 
-  
-  tidy()
+
+#--let's try dummy coding
+library(fastDummies)
+
+mdat_sub_dum <- 
+  mdat_sub %>% 
+  fastDummies::dummy_cols(., remove_first_dummy = T) %>% 
+  clean_names() %>% 
+  select(-dept, -gender, -rank)
+
+m2 <- lm(lsal ~ 0 + ., data = mdat_sub_dum)
+summary(m2)
 
 get_prior(lsal ~ 0 + dept*rank*gender, data = mdat_sub)
 
