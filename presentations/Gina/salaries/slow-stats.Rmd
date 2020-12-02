@@ -256,7 +256,7 @@ log\_sal_i \sim Normal(\mu_i, \sigma) \\
 \end{array}
 $$
 
-HOnestly, every time I mess with the priors things get worse. Do it with the defaults. 
+Honestly, every time I mess with the priors things get worse. Do it with the defaults. 
 
 ```{r}
   bm1 <-
@@ -272,10 +272,7 @@ HOnestly, every time I mess with the priors things get worse. Do it with the def
 ```{r}
 summary(bm1)
 ```
-Again I'm having a hard time with these estimates. 
-*What does the intercept represent?*
-
-No matter, I suppose the interaction demonstrates the effect of being male at each rank.The effect of genderm is actually the effect at the assoc rank. 
+There is no nice emmeans for the brms output, so I actually have to think about what the intercept means. 
 
 ```{r}
 
@@ -298,11 +295,4 @@ bm1 %>%
 
 It seems like if I were to ask you if you wanted a male or female salary at the prof rank, you'd tend towards picking the male one. 
 
-Whether this is true at an indvidual department level seems like a question better asked using frequentist methods, because estimating `r mdat %>% select(dept) %>% distinct() %>% count() %>% pull(n)` departments for 4 ranks and 2 genders in 3-way interactions means over 200 parameters. 
-
-
-Returning to the frequentist model with a three-way interaction:
-```{r}
-summary(m1) 
-```
-How do I know what the effect of being male in agronomy is?
+I tried to run a three-way interaction in brms. It took over an hour. Additionally, doing the gymnastics of getting estimates for each department would have been challenging.
