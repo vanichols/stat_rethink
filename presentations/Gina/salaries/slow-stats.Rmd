@@ -256,6 +256,62 @@ log\_sal_i \sim Normal(\mu_i, \sigma) \\
 \end{array}
 $$
 
+What do the default priors look like?
+```{r}
+get_prior(
+  lsal ~  (1 | dept) + rank*gender,
+  data = mdat
+  ) 
+```
+
+```{r}
+
+get_prior(
+  lsal ~  (1 | dept) + rank*gender,
+  data = mdat
+  ) %>%
+  parse_dist(prior) %>% #--a tidybayes function
+  ggplot(aes(y = prior, dist = .dist, args = .args, fill = class)) +
+  stat_dist_halfeye() +
+  theme(axis.text=element_text(size=15))
+```
+
+Visualize them. 
+```{r}
+
+pexp <- prior(student_t(3, 11.5, 2.5), class = "b",  coef = "default") +
+  prior(student_t(3, 11.5, 2), class = "b", coef = "tighter") +
+  prior(student_t(3, 11.5, 1), class = "b", coef = "even tighter") +
+  prior(student_t(2, 11.5, 1), class = "b", coef = "lower dof") +
+  prior(student_t(6, 11.5, 1), class = "b", coef = "higher dog")
+
+pexp %>%
+  parse_dist(prior) %>% #--a tidybayes function
+  ggplot(aes(y = prior, dist = .dist, args = .args, fill = coef)) + #--never would've figured this out
+  stat_dist_halfeye() +
+  theme(axis.text=element_text(size=15))
+
+```
+
+I think the sd of 1 is reasonable. The right tail should probably be longer.
+
+
+```{r}
+p0 <-  prior(student_t(6, 11.5, 1), class = "Intercept")
+
+bm0 <-
+  brm(
+    data = mdat,
+    family = gaussian,
+    formula = lsal ~ (1|dept) + rank*gender,
+    prior = p0,
+    iter = 4000, chains = 4,
+    seed = 7) 
+
+summary(bm0)
+```
+
+
 Honestly, every time I mess with the priors things get worse. Do it with the defaults. 
 
 ```{r}
@@ -267,9 +323,6 @@ Honestly, every time I mess with the priors things get worse. Do it with the def
     iter = 4000, chains = 4,
     seed = 7) 
 
-```
-
-```{r}
 summary(bm1)
 ```
 There is no nice emmeans for the brms output, so I actually have to think about what the intercept means. 
